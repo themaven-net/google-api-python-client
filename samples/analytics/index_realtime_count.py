@@ -42,15 +42,22 @@ understands by running:
 """
 from __future__ import print_function
 
-__author__ = 'api.nickm@gmail.com (Nick Mihailovski)'
+__author__ = 'Ben Joldersma (ben@themaven.net)'
 
 import argparse
 import sys
+import json
+import datetime
+import pprint
+from elasticsearch import Elasticsearch
 
 from googleapiclient.errors import HttpError
 from googleapiclient import sample_tools
 from oauth2client.client import AccessTokenRefreshError
 
+url = 'http://localhost:9200/realtime_users/event'
+pp = pprint.PrettyPrinter(indent=4)
+es = Elasticsearch()
 
 def main(argv):
   # Authenticate and construct service.
@@ -60,12 +67,8 @@ def main(argv):
 
   # Try to make a request to the API. Print the results or handle errors.
   try:
-    first_profile_id = get_first_profile_id(service)
-    if not first_profile_id:
-      print('Could not find a valid profile for this user.')
-    else:
-      results = get_top_keywords(service, first_profile_id)
-      print_results(results)
+    results = get_realtime(service, '162726243')
+    print_results(results)
 
   except TypeError as error:
     # Handle errors in constructing a query.
@@ -82,65 +85,10 @@ def main(argv):
            'the application to re-authorize')
 
 
-def get_first_profile_id(service):
-  """Traverses Management API to return the first profile id.
-
-  This first queries the Accounts collection to get the first account ID.
-  This ID is used to query the Webproperties collection to retrieve the first
-  webproperty ID. And both account and webproperty IDs are used to query the
-  Profile collection to get the first profile id.
-
-  Args:
-    service: The service object built by the Google API Python client library.
-
-  Returns:
-    A string with the first profile ID. None if a user does not have any
-    accounts, webproperties, or profiles.
-  """
-
-  accounts = service.management().accounts().list().execute()
-
-  if accounts.get('items'):
-    firstAccountId = accounts.get('items')[0].get('id')
-    webproperties = service.management().webproperties().list(
-        accountId=firstAccountId).execute()
-
-    if webproperties.get('items'):
-      firstWebpropertyId = webproperties.get('items')[0].get('id')
-      profiles = service.management().profiles().list(
-          accountId=firstAccountId,
-          webPropertyId=firstWebpropertyId).execute()
-
-      if profiles.get('items'):
-        return profiles.get('items')[0].get('id')
-
-  return None
-
-
-def get_top_keywords(service, profile_id):
-  """Executes and returns data from the Core Reporting API.
-
-  This queries the API for the top 25 organic search terms by visits.
-
-  Args:
-    service: The service object built by the Google API Python client library.
-    profile_id: String The profile ID from which to retrieve analytics data.
-
-  Returns:
-    The response returned from the Core Reporting API.
-  """
-
-  return service.data().ga().get(
+def get_realtime(service, profile_id):
+  return service.data().realtime().get(
       ids='ga:' + profile_id,
-      start_date='2012-01-01',
-      end_date='2012-01-15',
-      metrics='ga:visits',
-      dimensions='ga:source,ga:keyword',
-      sort='-ga:visits',
-      filters='ga:medium==organic',
-      start_index='1',
-      max_results='25').execute()
-
+      metrics='rt:activeUsers').execute()
 
 def print_results(results):
   """Prints out the results.
@@ -152,23 +100,14 @@ def print_results(results):
     results: The response returned from the Core Reporting API.
   """
 
-  print()
-  print('Profile Name: %s' % results.get('profileInfo').get('profileName'))
-  print()
-
-  # Print header.
-  output = []
-  for header in results.get('columnHeaders'):
-    output.append('%30s' % header.get('name'))
-  print(''.join(output))
-
   # Print data table.
   if results.get('rows', []):
     for row in results.get('rows'):
       output = []
       for cell in row:
-        output.append('%30s' % cell)
-      print(''.join(output))
+          print(cell)
+          es.index(index='realtime_users', doc_type='event', body={"date":
+              datetime.datetime.now(), "count": cell})
 
   else:
     print('No Rows Found')
